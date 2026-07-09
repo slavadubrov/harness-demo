@@ -1,5 +1,7 @@
 # Harness ablation lab
 
+![Harness lab](./assets/harness_lab.png)
+
 This project is a small, deterministic lab for the article [Harness Engineering
 for AI Agents: Designing the Loop Around the
 Model](TBD).
