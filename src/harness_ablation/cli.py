@@ -11,6 +11,8 @@ from .model import (
     failures_for_config,
     run_suite,
     summarize,
+    summarize_ablation_pairs,
+    validate_ablation_pairs,
     validate_reference_expectations,
 )
 
@@ -29,14 +31,14 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def print_table() -> None:
-    """Print the stable summary table used by the article and README."""
+def print_tables() -> None:
+    """Print the cumulative matrix and valid single-component comparisons."""
 
     results = run_suite()
     rows = summarize(results)
     validate_reference_expectations(rows)
 
-    print("Harness ablation matrix (synthetic teaching lab)")
+    print("Cumulative harness matrix (synthetic teaching lab)")
     print("config             passed  success  avg_attempts  avg_simulated_tokens")
     print("-----------------  ------  -------  ------------  --------------------")
     for row in rows:
@@ -46,6 +48,19 @@ def print_table() -> None:
             f"{row.success_rate:>6.0%}  "
             f"{row.avg_attempts:>12.2f}  "
             f"{row.avg_simulated_tokens:>20.0f}"
+        )
+
+    validate_ablation_pairs()
+    print("\nLeave-one-component-out ablations")
+    print("component                 control  treatment  delta")
+    print("-----------------------  -------  ---------  -----")
+    for row in summarize_ablation_pairs():
+        delta = row.treatment_passed - row.control_passed
+        print(
+            f"{row.component:<23}  "
+            f"{row.control_passed:>2}/{row.total:<2}    "
+            f"{row.treatment_passed:>2}/{row.total:<2}      "
+            f"{delta:>+3}"
         )
 
 
@@ -70,7 +85,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     started = perf_counter()
     args = build_parser().parse_args(argv)
-    print_table()
+    print_tables()
     if args.show_failures:
         print_failures()
     print(f"\nSmoke check passed in {perf_counter() - started:.3f}s")
