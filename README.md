@@ -4,7 +4,7 @@
 
 This project is a small, deterministic lab for the article [Harness Engineering
 for AI Agents: Designing the Loop Around the
-Model](https://slavadubrov.github.io/blog/2026/06/10/ai-agent-harness-engineering/).
+Model](https://slavadubrov.github.io/blog/2026/07/22/ai-agent-harness-engineering/).
 
 It teaches one method: keep a task suite fixed, switch one harness component at
 a time, and record the trade-off. The code has no network calls, model calls,
