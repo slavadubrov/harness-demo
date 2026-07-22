@@ -5,12 +5,18 @@ from __future__ import annotations
 import unittest
 
 from harness_ablation.model import (
+    ABLATION_PAIRS,
     CONFIGS,
     TASKS,
+    AblationPair,
+    HarnessConfig,
+    changed_components,
     failures_for_config,
     run_suite,
     run_task,
     summarize,
+    summarize_ablation_pairs,
+    validate_ablation_pairs,
     validate_reference_expectations,
 )
 
@@ -50,6 +56,30 @@ class HarnessAblationTests(unittest.TestCase):
         failures = failures_for_config(self.results, "full-harness")
 
         self.assertEqual(failures, ())
+
+    def test_every_ablation_pair_changes_exactly_one_component(self) -> None:
+        validate_ablation_pairs()
+
+        for pair in ABLATION_PAIRS:
+            self.assertEqual(
+                changed_components(pair.control, pair.treatment),
+                (pair.component,),
+            )
+
+    def test_each_isolated_component_improves_its_paired_result(self) -> None:
+        for row in summarize_ablation_pairs():
+            self.assertGreater(row.treatment_passed, row.control_passed)
+            self.assertEqual(row.treatment_passed, len(TASKS))
+
+    def test_validator_rejects_a_multi_component_pair(self) -> None:
+        invalid = AblationPair(
+            "retry_policy",
+            HarnessConfig("control"),
+            HarnessConfig("treatment", retry_policy=True, evaluator=True),
+        )
+
+        with self.assertRaisesRegex(AssertionError, "must change only retry_policy"):
+            validate_ablation_pairs((invalid,))
 
 
 if __name__ == "__main__":

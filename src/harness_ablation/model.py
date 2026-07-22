@@ -10,6 +10,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from statistics import mean
 
+COMPONENT_FIELDS: tuple[str, ...] = (
+    "progress_handoff",
+    "evaluator",
+    "retry_policy",
+    "fail_closed_acceptance",
+    "context_reset",
+)
+
 
 @dataclass(frozen=True)
 class Task:
@@ -65,6 +73,27 @@ class SummaryRow:
     avg_simulated_tokens: float
 
 
+@dataclass(frozen=True)
+class AblationPair:
+    """A control/treatment pair that changes one named harness component."""
+
+    component: str
+    control: HarnessConfig
+    treatment: HarnessConfig
+
+
+@dataclass(frozen=True)
+class PairSummary:
+    """Outcome summary for one validated single-component comparison."""
+
+    component: str
+    control: str
+    treatment: str
+    control_passed: int
+    treatment_passed: int
+    total: int
+
+
 TASKS: tuple[Task, ...] = (
     Task("rename-api-field", 1),
     Task("fix-parser-edge-case", 2, flaky_tool=True),
@@ -95,6 +124,93 @@ CONFIGS: tuple[HarnessConfig, ...] = (
         context_reset=True,
     ),
 )
+
+FULL_HARNESS = CONFIGS[-1]
+
+ABLATION_PAIRS: tuple[AblationPair, ...] = (
+    AblationPair(
+        "retry_policy",
+        HarnessConfig(
+            "without-retry-policy",
+            progress_handoff=True,
+            evaluator=True,
+            fail_closed_acceptance=True,
+            context_reset=True,
+        ),
+        FULL_HARNESS,
+    ),
+    AblationPair(
+        "progress_handoff",
+        HarnessConfig(
+            "without-progress-handoff",
+            evaluator=True,
+            retry_policy=True,
+            fail_closed_acceptance=True,
+            context_reset=True,
+        ),
+        FULL_HARNESS,
+    ),
+    AblationPair(
+        "evaluator",
+        HarnessConfig(
+            "without-evaluator",
+            progress_handoff=True,
+            retry_policy=True,
+            fail_closed_acceptance=True,
+            context_reset=True,
+        ),
+        FULL_HARNESS,
+    ),
+    AblationPair(
+        "fail_closed_acceptance",
+        HarnessConfig(
+            "without-fail-closed-acceptance",
+            progress_handoff=True,
+            evaluator=True,
+            retry_policy=True,
+            context_reset=True,
+        ),
+        FULL_HARNESS,
+    ),
+    AblationPair(
+        "context_reset",
+        HarnessConfig(
+            "without-context-reset",
+            progress_handoff=True,
+            evaluator=True,
+            retry_policy=True,
+            fail_closed_acceptance=True,
+        ),
+        FULL_HARNESS,
+    ),
+)
+
+
+def changed_components(
+    control: HarnessConfig, treatment: HarnessConfig
+) -> tuple[str, ...]:
+    """Return the component fields whose values differ between two variants."""
+
+    return tuple(
+        field
+        for field in COMPONENT_FIELDS
+        if getattr(control, field) != getattr(treatment, field)
+    )
+
+
+def validate_ablation_pairs(
+    pairs: tuple[AblationPair, ...] = ABLATION_PAIRS,
+) -> None:
+    """Reject comparisons that change zero or multiple harness components."""
+
+    for pair in pairs:
+        changed = changed_components(pair.control, pair.treatment)
+        if changed != (pair.component,):
+            message = (
+                f"{pair.component} pair must change only {pair.component}; "
+                f"changed {changed or 'nothing'}"
+            )
+            raise AssertionError(message)
 
 
 def run_task(task: Task, config: HarnessConfig) -> RunResult:
@@ -175,6 +291,30 @@ def summarize(
                 success_rate=sum(result.passed for result in subset) / len(subset),
                 avg_attempts=mean(result.attempts for result in subset),
                 avg_simulated_tokens=mean(result.simulated_tokens for result in subset),
+            )
+        )
+    return tuple(rows)
+
+
+def summarize_ablation_pairs(
+    tasks: tuple[Task, ...] = TASKS,
+    pairs: tuple[AblationPair, ...] = ABLATION_PAIRS,
+) -> tuple[PairSummary, ...]:
+    """Summarize validated leave-one-component-out comparisons."""
+
+    validate_ablation_pairs(pairs)
+    rows: list[PairSummary] = []
+    for pair in pairs:
+        control_passed = sum(run_task(task, pair.control).passed for task in tasks)
+        treatment_passed = sum(run_task(task, pair.treatment).passed for task in tasks)
+        rows.append(
+            PairSummary(
+                component=pair.component,
+                control=pair.control.name,
+                treatment=pair.treatment.name,
+                control_passed=control_passed,
+                treatment_passed=treatment_passed,
+                total=len(tasks),
             )
         )
     return tuple(rows)
