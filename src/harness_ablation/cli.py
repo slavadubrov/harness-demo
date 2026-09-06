@@ -54,12 +54,12 @@ def print_tables() -> None:
     print("\nLeave-one-component-out ablations")
     print("component                 control  treatment  delta")
     print("-----------------------  -------  ---------  -----")
-    for row in summarize_ablation_pairs():
-        delta = row.treatment_passed - row.control_passed
+    for pair in summarize_ablation_pairs():
+        delta = pair.treatment_passed - pair.control_passed
         print(
-            f"{row.component:<23}  "
-            f"{row.control_passed:>2}/{row.total:<2}    "
-            f"{row.treatment_passed:>2}/{row.total:<2}      "
+            f"{pair.component:<23}  "
+            f"{pair.control_passed:>2}/{pair.total:<2}    "
+            f"{pair.treatment_passed:>2}/{pair.total:<2}      "
             f"{delta:>+3}"
         )
 

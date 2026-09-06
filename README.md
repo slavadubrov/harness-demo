@@ -1,107 +1,140 @@
-# Harness ablation lab
+# Harness evaluation lab
 
-![A cumulative feature matrix followed by isolated component comparisons](./assets/harness_lab.svg)
+Understand why an agent saying “done” is different from a runner proving that a
+particular artifact passed its checks. Start with a deterministic simulation,
+execute real checks without a model, then optionally measure an LLM with and
+without check feedback.
 
-This project is a small, deterministic lab for the article [Harness Engineering
-for AI Agents: Designing the Loop Around the
-Model](https://slavadubrov.github.io/blog/2026/07/22/ai-agent-harness-engineering/).
+Companion to [Harness Engineering for AI Agents](https://slavadubrov.github.io/blog/2026/07/22/ai-agent-harness-engineering/).
+The article's [pinned revision `517353f3`](https://github.com/slavadubrov/harness-demo/tree/517353f3a47541d66099983170fe90812b6ef23b)
+reproduces the original simulation. The measured lanes below are a later addition.
 
-It teaches one method: keep a task suite fixed, switch one harness component at
-a time, and record the trade-off. The code has no network calls, model calls,
-API keys, Docker containers, or GPUs.
+![An agent proposes data; the runner captures bytes, executes trusted checks and binds acceptance to the unchanged artifact.](assets/evaluation-flow.svg)
 
-It is **not** a benchmark for model capability or a measurement of a production
-agent. The task outcomes and token counts are simulated. Their job is to make
-the causal assumptions visible.
+## Start here
 
-## What it simulates
-
-Each of the 12 synthetic tasks declares the conditions that would block success:
-
-- a flaky tool call that needs a bounded retry;
-- work that crosses a session boundary and needs a progress handoff;
-- a large task that benefits from a fresh-context reset;
-- an implementation gap that a fresh evaluator catches;
-- an ambiguous "done" claim that needs a fail-closed acceptance check.
-
-The lab first runs the same tasks through four cumulative configurations:
-
-| Configuration | Components switched on |
-| --- | --- |
-| `bare-loop` | None |
-| `retry-only` | Retry policy |
-| `handoff-and-retry` | Progress handoff and retry policy |
-| `full-harness` | Handoff, retry, evaluator, fail-closed acceptance, context reset |
-
-That matrix is useful for showing the growing cost and aggregate pass rate, but
-its final transition adds three components. It cannot attribute the final lift
-to any one of them. The lab therefore runs a second set of comparisons. Each
-control removes exactly one component from `full-harness`, while the treatment
-restores only that component. A validator and regression test reject any pair
-that changes more than one declared component.
-
-## Quick start
-
-Install [uv](https://docs.astral.sh/uv/) and run:
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/). Python 3.11+
+and Git are required; Ubuntu 24.04 is the CI target, and macOS is also supported.
+From this checkout:
 
 ```bash
+uv sync --locked --extra live
 make check
 make run
-make failures
+make fixtures
 ```
 
-`make check` runs Ruff and the unit tests. `make run` prints the summary matrix.
-`make failures` also prints the named reason each synthetic task did not pass.
+Installation downloads dependencies. The checks and these demos are offline;
+no API key is read. `--extra live` installs the SDK so its mocked transport tests
+also run. A minimal installation uses `uv sync --locked` and can run both offline
+lanes without the SDK. `make check` runs Ruff (including imports and formatting),
+strict mypy, and unittest; `make run` preserves the original simulator command.
 
-The result is stable because there is no sampling:
+| Lane | Command | What the result establishes |
+| --- | --- | --- |
+| Simulation | `uv run --locked harness-ablation` | Declared causal assumptions across 12 synthetic tasks; all tokens and outcomes are simulated. |
+| Fixture | `uv run --locked harness-eval fixture fixtures/passing` | A trusted Python check actually passed on these exact submitted bytes. |
+| Live | `harness-eval live …` below | A real model proposed configurations scored by the same runner, under recorded settings and budgets. |
 
-```text
-Cumulative harness matrix (synthetic teaching lab)
-config             passed  success  avg_attempts  avg_simulated_tokens
------------------  ------  -------  ------------  --------------------
-bare-loop            1/12        8%          1.00                  1738
-retry-only           2/12       17%          1.33                  1798
-handoff-and-retry    5/12       42%          1.33                  1890
-full-harness        12/12      100%          1.33                  2126
+A **harness** owns the loop around the model: instructions, checks, feedback,
+budgets and stopping. An **evaluation harness** fixes the tasks and grading
+rules, runs alternatives, and records comparable evidence. Here the two live
+alternatives differ only in whether public check feedback reaches the model.
 
-Leave-one-component-out ablations
-component                 control  treatment  delta
------------------------  -------  ---------  -----
-retry_policy              8/12    12/12       +4
-progress_handoff          7/12    12/12       +5
-evaluator                 8/12    12/12       +4
-fail_closed_acceptance    7/12    12/12       +5
-context_reset            10/12    12/12       +2
-```
-
-The full configuration costs more simulated tokens. That is deliberate: a
-harness feature must earn its cost, latency, and operational complexity.
-
-## Project layout
-
-```text
-src/harness_ablation/model.py  Synthetic tasks, configurations, and pure runner
-src/harness_ablation/cli.py    Console output and --show-failures flag
-tests/test_model.py            Regression tests for the teaching assumptions
-assets/harness_lab.svg         Accessible diagram of the two experiment stages
-```
-
-The package exposes a `harness-ablation` command, so a future repository can
-keep the same interface:
+## See an actual failure
 
 ```bash
-uv run harness-ablation --show-failures
+uv run --locked harness-eval fixture fixtures/failing --output report/failure.json
 ```
 
-## Turning the lab into a real experiment
+This deliberately exits **1**, even though `agent-claim.txt` says all tests passed.
+The good fixture exits **0**. Invalid CLI/setup inputs exit **2**. A completed live
+experiment also exits 1 if any planned trial fails or is not run; the JSON report
+distinguishes a bad answer from a provider or runner failure.
 
-Replace `TASKS` with a representative, versioned task suite. Replace
-`simulated_tokens` with real trace data. Keep the model, environment, task
-definition, and scoring rule fixed while you change one harness feature. The
-`AblationPair` validator is a small guardrail against calling a bundled change
-an ablation. Track task success, escaped defects, latency, cost, retries, policy
-blocks, and human review time.
+The artifact is a directory containing `config.json`, for example:
 
-Do not copy the 100% result into a slide deck. The fake agent is designed to
-make the method easy to see. Real agents have the poor manners to be more
-interesting.
+```json
+{"strip": true, "case": "lower", "separator": "-"}
+```
+
+The trusted interpreter applies these operations to strings: trim, change case,
+and optionally join whitespace-separated words. For the `slug` task,
+`" Hello WORLD "` must become `"hello-world"`. The runner checks strict configuration
+shape and all held-out cases. Candidates cannot supply commands or disable checks.
+Additional submitted files are hashed but never executed. This is a real check
+of a small declarative artifact, **not a general coding-agent benchmark**.
+
+To see why a later edit invalidates a pass, run the walkthrough in
+[Evaluation contracts](docs/evaluation.md#an-edit-invalidates-the-pass).
+
+## Run a small LLM experiment
+
+Put `OPENAI_API_KEY` in your existing `.env` (see [.env.example](.env.example) for
+the variable name). Only the command below loads that file. Restart the CLI command
+after changing `.env`; there is no background service to restart.
+
+```bash
+uv run --locked --extra live --env-file .env harness-eval live \
+  --model gpt-5.6-luna --task slug --trials 1 \
+  --max-output-tokens 1024 --output report/first-live.json
+```
+
+This is billable: **at most 4 requests**, each capped at 1,024 generated tokens
+(including reasoning). Input tokens are billed too. The report records actual
+usage when supplied by the provider; a failed request's unknown usage is never
+reported as zero cost. These are call/output limits, not a dollar spending cap.
+The model argument is required; use an accessible pinned snapshot for a repeatable
+comparison. Both the requested and returned model IDs are recorded.
+
+Both arms have two attempts, including when attempt one succeeds. `blind-retry`
+gets a generic review request; `check-feedback` gets the public check result.
+Only the final artifact is scored on holdout cases. A model may get both right
+immediately, so **zero improvement is a valid result**. Try `--task all --trials 3`
+for 36 planned calls, after reviewing the small run.
+
+Responses use `store=False`, retain encrypted reasoning output between attempts,
+and perform no compaction. `--drop-reasoning` changes retention independently;
+compaction stays disabled. Provider failures, incomplete streams and refusals
+stop the entire experiment without automatic retry. Partial output never becomes
+an artifact. Existing live report paths are refused to prevent accidental overwrite.
+
+## Read the implementation
+
+| File | Responsibility |
+| --- | --- |
+| [model.py](src/harness_ablation/model.py), [cli.py](src/harness_ablation/cli.py) | Pure simulation and its console tables. |
+| [suite.py](src/harness_ablation/suite.py) | Three versioned tasks, public examples and held-out cases. |
+| [artifacts.py](src/harness_ablation/artifacts.py) | Immutable submitted bytes, manifest hashes and atomic report writes. |
+| [grader.py](src/harness_ablation/grader.py) | Trusted standalone configuration validation and behavioral checks. |
+| [runner.py](src/harness_ablation/runner.py) | Isolated Python execution, evidence and stale-pass rejection. |
+| [provider.py](src/harness_ablation/provider.py) | Optional OpenAI transport; complete responses or terminal failures. |
+| [experiment.py](src/harness_ablation/experiment.py) | Fixed two-attempt comparisons, budgets, histories and trial accounting. |
+| [eval_cli.py](src/harness_ablation/eval_cli.py) | CLI arguments, configuration and exit codes. |
+
+Next: [evaluation method and extension recipe](docs/evaluation.md),
+[simulation assumptions and original tables](docs/simulation.md).
+
+## Why a separate repository?
+
+[Market Analyst Agent](https://github.com/slavadubrov/market-analyst-agent) demonstrates
+an application: tools, graph execution, memory, report review and recovery. This
+lab isolates evaluation contracts so a new reader does not need market data,
+Redis, Postgres, Qdrant or LangGraph to understand acceptance and controlled
+comparisons. Keep the repositories separate. An application-specific evaluation
+can reuse this method with its own report artifacts and trusted grading rules;
+there is no shared package or runtime dependency to maintain today.
+
+## Boundaries
+
+The simulator's 100% score is constructed, not an observed agent success rate.
+The live suite is tiny, public and synthetic; “held out” means withheld from
+requests, not a secret benchmark or proof against training contamination.
+
+The agent receives no filesystem or shell tools. The grader interprets data;
+`python -I` is import isolation, not an OS security sandbox. The runner, task
+suite, Python installation and local report store are trusted. Evidence JSON is
+an audit record, not a signed credential; never accept a model-supplied report
+as authorization. Use a dedicated small submission directory, not an entire
+repository containing credentials. Arbitrary code evaluation would require a
+separate sandbox and a different threat model.
