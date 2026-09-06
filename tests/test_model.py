@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 
 from harness_ablation.model import (
     ABLATION_PAIRS,
@@ -10,6 +11,7 @@ from harness_ablation.model import (
     TASKS,
     AblationPair,
     HarnessConfig,
+    Task,
     changed_components,
     failures_for_config,
     run_suite,
@@ -80,6 +82,23 @@ class HarnessAblationTests(unittest.TestCase):
 
         with self.assertRaisesRegex(AssertionError, "must change only retry_policy"):
             validate_ablation_pairs((invalid,))
+
+    def test_invalid_public_inputs_do_not_produce_misleading_scores(self) -> None:
+        for difficulty in (0, 6, True):
+            with self.assertRaises(ValueError):
+                Task("invalid", difficulty)
+        with self.assertRaises(ValueError):
+            run_suite(())
+        with self.assertRaises(ValueError):
+            run_suite(TASKS + (TASKS[0],))
+        with self.assertRaises(ValueError):
+            summarize(self.results + (self.results[0],))
+        with self.assertRaises(ValueError):
+            summarize(self.results[1:])
+        with self.assertRaises(ValueError):
+            summarize(self.results + (replace(self.results[0], config="unknown"),))
+        with self.assertRaises(ValueError):
+            summarize_ablation_pairs(())
 
 
 if __name__ == "__main__":

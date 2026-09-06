@@ -1,0 +1,27 @@
+name: checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        python: ['3.11', '3.12', '3.13', '3.14']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.26'
+          python-version: ${{ matrix.python }}
+      - run: uv sync --locked --extra live
+      - run: make check
+      - run: make run fixtures
+      - run: uv build
+      - name: Installed wheel without optional dependencies
+        run: |
+          uv venv /tmp/harness-wheel
+          uv pip install --python /tmp/harness-wheel/bin/python --no-deps dist/*.whl
+          cd /tmp
+          /tmp/harness-wheel/bin/harness-ablation
+          /tmp/harness-wheel/bin/harness-eval fixture "$GITHUB_WORKSPACE/fixtures/passing"

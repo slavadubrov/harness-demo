@@ -4,14 +4,18 @@ build-backend = "hatchling.build"
 
 [project]
 name = "harness-ablation-lab"
-version = "0.1.0"
+version = "0.2.0"
 description = "A deterministic teaching lab for agent-harness ablation."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
 
+[project.optional-dependencies]
+live = ["openai>=2.0,<3"]
+
 [project.scripts]
 harness-ablation = "harness_ablation.cli:main"
+harness-eval = "harness_ablation.eval_cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/harness_ablation"]
@@ -19,7 +23,13 @@ packages = ["src/harness_ablation"]
 [dependency-groups]
 dev = [
   "ruff>=0.12.0",
+  "mypy>=1.15,<2",
 ]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src"]
 
 [tool.ruff]
 line-length = 88

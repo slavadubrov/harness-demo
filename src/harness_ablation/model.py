@@ -7,7 +7,7 @@ without mistaking simulated output for production-agent evidence.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from statistics import mean
 
 COMPONENT_FIELDS: tuple[str, ...] = (
@@ -30,6 +30,22 @@ class Task:
     flaky_tool: bool = False
     ambiguous_done: bool = False
 
+    def __post_init__(self) -> None:
+        if (
+            not self.name
+            or type(self.difficulty) is not int
+            or not 1 <= self.difficulty <= 5
+        ):
+            raise ValueError("Task needs a name and integer difficulty from 1 to 5")
+        for field in (
+            "needs_progress_file",
+            "needs_fresh_evaluator",
+            "flaky_tool",
+            "ambiguous_done",
+        ):
+            if type(getattr(self, field)) is not bool:
+                raise ValueError(f"{field} must be boolean")
+
 
 @dataclass(frozen=True)
 class HarnessConfig:
@@ -41,6 +57,12 @@ class HarnessConfig:
     retry_policy: bool = False
     fail_closed_acceptance: bool = False
     context_reset: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("Configuration needs a name")
+        if any(type(getattr(self, field)) is not bool for field in COMPONENT_FIELDS):
+            raise ValueError("Harness switches must be boolean")
 
 
 @dataclass(frozen=True)
@@ -127,62 +149,23 @@ CONFIGS: tuple[HarnessConfig, ...] = (
 
 FULL_HARNESS = CONFIGS[-1]
 
-ABLATION_PAIRS: tuple[AblationPair, ...] = (
+ABLATION_PAIRS: tuple[AblationPair, ...] = tuple(
     AblationPair(
+        component,
+        replace(
+            FULL_HARNESS,
+            name=f"without-{component.replace('_', '-')}",
+            **{component: False},
+        ),
+        FULL_HARNESS,
+    )
+    for component in (
         "retry_policy",
-        HarnessConfig(
-            "without-retry-policy",
-            progress_handoff=True,
-            evaluator=True,
-            fail_closed_acceptance=True,
-            context_reset=True,
-        ),
-        FULL_HARNESS,
-    ),
-    AblationPair(
         "progress_handoff",
-        HarnessConfig(
-            "without-progress-handoff",
-            evaluator=True,
-            retry_policy=True,
-            fail_closed_acceptance=True,
-            context_reset=True,
-        ),
-        FULL_HARNESS,
-    ),
-    AblationPair(
         "evaluator",
-        HarnessConfig(
-            "without-evaluator",
-            progress_handoff=True,
-            retry_policy=True,
-            fail_closed_acceptance=True,
-            context_reset=True,
-        ),
-        FULL_HARNESS,
-    ),
-    AblationPair(
         "fail_closed_acceptance",
-        HarnessConfig(
-            "without-fail-closed-acceptance",
-            progress_handoff=True,
-            evaluator=True,
-            retry_policy=True,
-            context_reset=True,
-        ),
-        FULL_HARNESS,
-    ),
-    AblationPair(
         "context_reset",
-        HarnessConfig(
-            "without-context-reset",
-            progress_handoff=True,
-            evaluator=True,
-            retry_policy=True,
-            fail_closed_acceptance=True,
-        ),
-        FULL_HARNESS,
-    ),
+    )
 )
 
 
@@ -261,12 +244,22 @@ def run_task(task: Task, config: HarnessConfig) -> RunResult:
     )
 
 
+def validate_suite(tasks: tuple[Task, ...], configs: tuple[HarnessConfig, ...]) -> None:
+    for label, names in (
+        ("tasks", [task.name for task in tasks]),
+        ("configs", [config.name for config in configs]),
+    ):
+        if not names or len(set(names)) != len(names):
+            raise ValueError(f"{label} must be nonempty and uniquely named")
+
+
 def run_suite(
     tasks: tuple[Task, ...] = TASKS,
     configs: tuple[HarnessConfig, ...] = CONFIGS,
 ) -> tuple[RunResult, ...]:
     """Run every task against every configuration in a stable order."""
 
+    validate_suite(tasks, configs)
     return tuple(run_task(task, config) for config in configs for task in tasks)
 
 
@@ -276,6 +269,19 @@ def summarize(
 ) -> tuple[SummaryRow, ...]:
     """Summarize a complete result set without hiding simulated metrics."""
 
+    names = [config.name for config in configs]
+    if not names or len(set(names)) != len(names):
+        raise ValueError("Configurations must be nonempty and uniquely named")
+    if set(result.config for result in results) != set(names):
+        raise ValueError("Results must match the requested configurations")
+    task_sets = []
+    for name in names:
+        tasks = [result.task for result in results if result.config == name]
+        if len(set(tasks)) != len(tasks):
+            raise ValueError("Duplicate task results")
+        task_sets.append(set(tasks))
+    if any(tasks != task_sets[0] for tasks in task_sets):
+        raise ValueError("Configurations must be evaluated on the same tasks")
     rows: list[SummaryRow] = []
     for config in configs:
         subset = tuple(result for result in results if result.config == config.name)
@@ -302,6 +308,7 @@ def summarize_ablation_pairs(
 ) -> tuple[PairSummary, ...]:
     """Summarize validated leave-one-component-out comparisons."""
 
+    validate_suite(tasks, (FULL_HARNESS,))
     validate_ablation_pairs(pairs)
     rows: list[PairSummary] = []
     for pair in pairs:
